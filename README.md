@@ -1,41 +1,32 @@
 # Spotify Playlist Maker
 
-A local helper app for creating real Spotify playlists without sharing your Spotify password.
+High quality nerd shit for making real Spotify playlists from a tiny local web app.
 
-## Setup
+No passwords. No dependencies. Just OAuth, search, select, ship playlist.
 
-1. Open the Spotify Developer Dashboard.
-2. Create an app.
-3. Add this redirect URI in the app settings:
+## Run It
 
-   ```text
-   http://127.0.0.1:8787/callback
-   ```
+Create a Spotify Developer app and add this redirect URI:
 
-4. Copy `.env.example` to `.env`.
-5. Fill in:
+```text
+http://127.0.0.1:8787/callback
+```
 
-   ```text
-   SPOTIFY_CLIENT_ID=...
-   SPOTIFY_CLIENT_SECRET=...
-   ```
-
-## Run
+Then:
 
 ```bash
+cp .env.example .env
 npm start
 ```
 
-Open:
+Fill `.env` with your Spotify client ID/secret, open:
 
 ```text
 http://127.0.0.1:8787
 ```
 
-Click **Connect Spotify**, authorize the app, then search tracks and create a playlist.
+Connect Spotify, pick tracks, create playlist, act like this was normal.
 
-## Notes
+## Tiny Safety Note
 
-- `.env` and `.spotify-token.json` are ignored by git.
-- The app uses Spotify OAuth scopes for creating public or private playlists.
-- It uses Node 18+ built-ins only, so there is no dependency install step.
+`.env` and Spotify tokens are ignored by git. Do not commit secrets. Vibes are not a security model.
