@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
+from functools import lru_cache
+from urllib.request import Request, urlopen
 
 from music_harvester.http import request_json
 from music_harvester.models import RawTrack, SourceConfig
@@ -9,7 +12,7 @@ from music_harvester.sources.base import SourceAdapter, SourceUnavailable
 
 class SoundCloudSource(SourceAdapter):
     def harvest(self) -> list[RawTrack]:
-        client_id = os.environ.get("SOUNDCLOUD_CLIENT_ID")
+        client_id = soundcloud_client_id()
         if not client_id:
             raise SourceUnavailable("SOUNDCLOUD_CLIENT_ID is not set; skipping SoundCloud source.")
         if not self.source.url:
@@ -81,3 +84,37 @@ class SoundCloudSource(SourceAdapter):
             playlist_title=playlist_title or self.source.name,
             position=position,
         )
+
+
+def search_soundcloud_playlists(query: str, limit: int = 10) -> list[dict]:
+    client_id = soundcloud_client_id()
+    if not client_id:
+        raise SourceUnavailable("SoundCloud client id unavailable.")
+    page = request_json(
+        "GET",
+        "https://api-v2.soundcloud.com/search/playlists",
+        params={"q": query, "client_id": client_id, "limit": max(1, min(limit, 20))},
+    )
+    return [item for item in page.get("collection", []) if item.get("permalink_url")]
+
+
+@lru_cache(maxsize=1)
+def soundcloud_client_id() -> str | None:
+    configured = os.environ.get("SOUNDCLOUD_CLIENT_ID")
+    if configured:
+        return configured
+    try:
+        html = urlopen(
+            Request("https://soundcloud.com/search/sets?q=test", headers={"User-Agent": "Mozilla/5.0"}),
+            timeout=20,
+        ).read().decode("utf-8", "replace")
+        assets = re.findall(r"https://a-v2\.sndcdn\.com/assets/[^\"']+\.js", html)
+        for asset in assets:
+            js = urlopen(Request(asset, headers={"User-Agent": "Mozilla/5.0"}), timeout=20).read().decode("utf-8", "replace")
+            matches = set(re.findall(r'client_id:"([A-Za-z0-9_-]{20,})"', js))
+            matches.update(re.findall(r'client_id=([A-Za-z0-9_-]{20,})', js))
+            if matches:
+                return sorted(matches)[0]
+    except Exception:
+        return None
+    return None

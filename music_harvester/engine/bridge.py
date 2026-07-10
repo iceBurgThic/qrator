@@ -11,6 +11,7 @@ from music_harvester.engine.normalize import normalize_key, split_artist_track
 from music_harvester.http import ApiError
 from music_harvester.models import RawTrack, SourceConfig
 from music_harvester.sources import SourceUnavailable, adapter_for
+from music_harvester.sources.soundcloud import search_soundcloud_playlists
 from music_harvester.sources.spotify import SpotifyClient
 
 
@@ -126,7 +127,50 @@ def candidate_sources(seeds: list[dict], source_urls: list[str], files: list[str
     except Exception as exc:
         notes.append(f"Spotify playlist candidate search unavailable: {exc}")
 
+    try:
+        for query in bridge_queries(seeds):
+            for playlist in search_soundcloud_playlists(query, limit=search_limit):
+                external = playlist.get("permalink_url")
+                if not external or external in seen:
+                    continue
+                seen.add(external)
+                name = slug(f"bridge_soundcloud_{playlist.get('title') or playlist.get('id')}")
+                sources.append(
+                    SourceConfig(
+                        name=name,
+                        platform="soundcloud",
+                        source_type="soundcloud_playlist",
+                        url=external,
+                        weight=2.4,
+                        category="structured_api",
+                    )
+                )
+    except Exception as exc:
+        notes.append(f"SoundCloud playlist candidate search unavailable: {exc}")
+
     return sources, notes
+
+
+def bridge_queries(seeds: list[dict]) -> list[str]:
+    values = [seed["value"] for seed in seeds]
+    queries = list(values)
+    if len(values) >= 2:
+        queries.insert(0, " ".join(values))
+    for seed in seeds:
+        artist = seed.get("artist")
+        title = seed.get("title")
+        if artist and title:
+            queries.append(f"{artist} {title}")
+            queries.append(artist)
+            queries.append(title)
+    result: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        normalized = query.lower()
+        if normalized not in seen:
+            seen.add(normalized)
+            result.append(query)
+    return result
 
 
 def source_from_url(name: str, url: str, weight: float) -> SourceConfig | None:
