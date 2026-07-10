@@ -44,12 +44,14 @@ def bridge_discover(
     artists: list[str],
     tracks: list[str],
     source_urls: list[str],
+    files: list[str] | None = None,
+    texts: list[str] | None = None,
     search_limit: int = 10,
 ) -> BridgeResult:
     seeds = normalize_seeds(artists, tracks)
     seed_type = "tracks" if tracks and not artists else "artists" if artists and not tracks else "mixed"
     bridge_run_id = store.create_bridge_run(seed_type, artists + tracks)
-    sources = candidate_sources(seeds, source_urls, search_limit)
+    sources = candidate_sources(seeds, source_urls, files or [], texts or [], search_limit)
 
     checked = 0
     ingested = 0
@@ -89,7 +91,7 @@ def normalize_seeds(artists: list[str], tracks: list[str]) -> list[dict]:
     return seeds
 
 
-def candidate_sources(seeds: list[dict], source_urls: list[str], search_limit: int) -> list[SourceConfig]:
+def candidate_sources(seeds: list[dict], source_urls: list[str], files: list[str], texts: list[str], search_limit: int) -> list[SourceConfig]:
     sources: list[SourceConfig] = []
     seen: set[str] = set()
     for index, url in enumerate(source_urls, 1):
@@ -97,6 +99,16 @@ def candidate_sources(seeds: list[dict], source_urls: list[str], search_limit: i
         if source and source.locator not in seen:
             seen.add(source.locator)
             sources.append(source)
+    for index, file_path in enumerate(files, 1):
+        key = f"file:{file_path}"
+        if key not in seen:
+            seen.add(key)
+            sources.append(SourceConfig(name=f"bridge_file_{index}", platform="text", source_type="text_import", url=file_path, weight=3.0, category="pasted_text"))
+    for index, text in enumerate(texts, 1):
+        key = f"text:{text[:80]}"
+        if key not in seen:
+            seen.add(key)
+            sources.append(SourceConfig(name=f"bridge_text_{index}", platform="manual", source_type="manual_seed", url=text, weight=3.0, category="pasted_text"))
 
     try:
         client = SpotifyClient()
@@ -107,7 +119,7 @@ def candidate_sources(seeds: list[dict], source_urls: list[str], search_limit: i
                     continue
                 seen.add(external)
                 name = slug(f"bridge_spotify_{playlist.get('name') or 'playlist'}_{playlist.get('id')}")
-                sources.append(SourceConfig(name=name, platform="spotify", source_type="playlist", url=external, weight=2.0))
+                sources.append(SourceConfig(name=name, platform="spotify", source_type="spotify_playlist", url=external, weight=2.0, category="structured_api"))
     except Exception:
         pass
 
@@ -116,9 +128,11 @@ def candidate_sources(seeds: list[dict], source_urls: list[str], search_limit: i
 
 def source_from_url(name: str, url: str, weight: float) -> SourceConfig | None:
     if "open.spotify.com/playlist" in url:
-        return SourceConfig(name=name, platform="spotify", source_type="playlist", url=url, weight=weight)
+        return SourceConfig(name=name, platform="spotify", source_type="spotify_playlist", url=url, weight=weight, category="manual_urls")
     if "soundcloud.com" in url:
-        return SourceConfig(name=name, platform="soundcloud", source_type="playlist", url=url, weight=weight)
+        return SourceConfig(name=name, platform="soundcloud", source_type="soundcloud_playlist", url=url, weight=weight, category="manual_urls")
+    if url.startswith(("http://", "https://")):
+        return SourceConfig(name=name, platform="web_page", source_type="html_page", url=url, weight=weight, category="manual_urls")
     return None
 
 

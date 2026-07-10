@@ -17,6 +17,7 @@ from music_harvester.engine.sequence import sequence_playlist
 from music_harvester.env import load_env
 from music_harvester.http import ApiError
 from music_harvester.models import Candidate, SourceConfig
+from music_harvester.resolvers.spotify_resolver import SpotifyResolver
 from music_harvester.sources import SourceUnavailable, adapter_for
 from music_harvester.sources.spotify import SpotifyClient
 
@@ -44,6 +45,13 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--source")
     ingest.set_defaults(func=cmd_ingest)
 
+    import_text = sub.add_parser("import-text")
+    import_text.add_argument("--name", required=True)
+    import_text.add_argument("--file")
+    import_text.add_argument("--text")
+    import_text.add_argument("--weight", type=float, default=1.0)
+    import_text.set_defaults(func=cmd_import_text)
+
     candidates = sub.add_parser("candidates")
     candidates.add_argument("--limit", type=int, default=40)
     candidates.set_defaults(func=cmd_candidates)
@@ -53,12 +61,16 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--length", type=int)
     generate.add_argument("--from-bridge", nargs="+")
     generate.add_argument("--source-url", action="append", default=[])
+    generate.add_argument("--file", action="append", default=[])
+    generate.add_argument("--text", action="append", default=[])
     generate.set_defaults(func=cmd_generate)
 
     bridge = sub.add_parser("bridge-discover")
     bridge.add_argument("--artists", nargs="+", default=[])
     bridge.add_argument("--tracks", nargs="+", default=[])
     bridge.add_argument("--source-url", action="append", default=[])
+    bridge.add_argument("--file", action="append", default=[])
+    bridge.add_argument("--text", action="append", default=[])
     bridge.add_argument("--search-limit", type=int, default=10)
     bridge.set_defaults(func=cmd_bridge_discover)
 
@@ -116,6 +128,39 @@ def cmd_ingest(args: argparse.Namespace, store: Store) -> int:
     return 0
 
 
+def cmd_import_text(args: argparse.Namespace, store: Store) -> int:
+    if bool(args.file) == bool(args.text):
+        print("Provide exactly one of --file or --text.")
+        return 1
+    if args.file:
+        source = SourceConfig(
+            name=args.name,
+            platform="text",
+            source_type="text_import",
+            url=args.file,
+            weight=args.weight,
+            category="pasted_text",
+        )
+    else:
+        source = SourceConfig(
+            name=args.name,
+            platform="manual",
+            source_type="manual_seed",
+            url=args.text,
+            weight=args.weight,
+            category="pasted_text",
+        )
+    source_id = store.upsert_source(source)
+    try:
+        count = store.add_raw_tracks(source_id, adapter_for(source).harvest())
+    except (SourceUnavailable, ApiError, OSError) as exc:
+        store.add_error(source.name, str(exc), source_id)
+        print(f"failed {source.name}: {exc}")
+        return 1
+    print(f"imported {count} candidates from {source.name}")
+    return 0
+
+
 def cmd_candidates(args: argparse.Namespace, store: Store) -> int:
     candidates, _ = build_candidates(store, Path(args.config_dir), args.limit)
     print(markdown_table(candidates[: args.limit]))
@@ -130,6 +175,8 @@ def cmd_generate(args: argparse.Namespace, store: Store) -> int:
             artists=args.from_bridge,
             tracks=[],
             source_urls=args.source_url,
+            files=args.file,
+            texts=args.text,
             search_limit=10,
         )
         print(
@@ -138,10 +185,12 @@ def cmd_generate(args: argparse.Namespace, store: Store) -> int:
         )
         mode = "bridge_discovery"
     selected, rejected, candidates = generate_playlist(store, Path(args.config_dir), mode, args.length)
-    write_outputs(selected, rejected, candidates, bridge=True if args.from_bridge else False)
+    write_outputs(store, selected, rejected, candidates, bridge=True if args.from_bridge else False)
     print(markdown_table(selected))
     print(f"saved {OUTPUT_DIR / 'candidates.json'}")
     print(f"saved {OUTPUT_DIR / 'final_playlist.md'}")
+    print(f"saved {OUTPUT_DIR / 'final_spotify_playlist.md'}")
+    print(f"saved {OUTPUT_DIR / 'source_report.md'}")
     print(f"saved {OUTPUT_DIR / 'rejected.md'}")
     return 0
 
@@ -155,6 +204,8 @@ def cmd_bridge_discover(args: argparse.Namespace, store: Store) -> int:
         artists=args.artists,
         tracks=args.tracks,
         source_urls=args.source_url,
+        files=args.file,
+        texts=args.text,
         search_limit=args.search_limit,
     )
     candidates, rejected = build_candidates(store, Path(args.config_dir), None)
@@ -211,7 +262,7 @@ def cmd_write_spotify(args: argparse.Namespace, store: Store) -> int:
 def cmd_run(args: argparse.Namespace, store: Store) -> int:
     cmd_ingest(args, store)
     selected, rejected, candidates = generate_playlist(store, Path(args.config_dir), args.mode, args.length)
-    write_outputs(selected, rejected, candidates)
+    write_outputs(store, selected, rejected, candidates)
     print(markdown_table(selected))
     if args.yes:
         playlist_id = write_spotify_playlist(selected, args.playlist_name, args.public, True)
@@ -255,21 +306,41 @@ def load_sources(path: Path) -> list[SourceConfig]:
     return [SourceConfig.from_dict(item) for item in raw]
 
 
-def write_outputs(selected: list[Candidate], rejected: list[Candidate], candidates: list[Candidate], bridge: bool = False) -> None:
+def write_outputs(store: Store, selected: list[Candidate], rejected: list[Candidate], candidates: list[Candidate], bridge: bool = False) -> None:
     OUTPUT_DIR.mkdir(exist_ok=True)
+    resolved, unresolved = resolve_shortlist(selected)
     (OUTPUT_DIR / "candidates.json").write_text(
+        json.dumps([candidate_to_json(item) for item in candidates], indent=2),
+        encoding="utf-8",
+    )
+    (OUTPUT_DIR / "discovered_candidates.json").write_text(
         json.dumps([candidate_to_json(item) for item in candidates], indent=2),
         encoding="utf-8",
     )
     FINAL_JSON.write_text(json.dumps([candidate_to_json(item) for item in selected], indent=2), encoding="utf-8")
     (OUTPUT_DIR / "final_playlist.md").write_text(markdown_table(selected), encoding="utf-8")
+    (OUTPUT_DIR / "shortlist.md").write_text(markdown_table(selected), encoding="utf-8")
+    (OUTPUT_DIR / "final_spotify_playlist.md").write_text(markdown_table(resolved), encoding="utf-8")
+    (OUTPUT_DIR / "unresolved_interesting.md").write_text(markdown_table(unresolved), encoding="utf-8")
     (OUTPUT_DIR / "rejected.md").write_text(rejected_markdown(rejected), encoding="utf-8")
+    (OUTPUT_DIR / "source_report.md").write_text(source_report_markdown(store, resolved), encoding="utf-8")
     if bridge:
         (OUTPUT_DIR / "bridge_playlist.md").write_text(markdown_table(selected), encoding="utf-8")
         (OUTPUT_DIR / "bridge_candidates.json").write_text(
             json.dumps([candidate_to_json(item) for item in candidates if item.bridge_source_score], indent=2),
             encoding="utf-8",
         )
+
+
+def resolve_shortlist(selected: list[Candidate]) -> tuple[list[Candidate], list[Candidate]]:
+    try:
+        resolver = SpotifyResolver()
+        resolved = [resolver.resolve(item) for item in selected]
+    except Exception:
+        resolved = selected
+    playable = [item for item in resolved if item.spotify_uri]
+    unresolved = [item for item in resolved if not item.spotify_uri]
+    return playable, unresolved
 
 
 def write_bridge_outputs(candidates: list[Candidate], rejected: list[Candidate]) -> None:
@@ -284,6 +355,34 @@ def write_bridge_outputs(candidates: list[Candidate], rejected: list[Candidate])
     (OUTPUT_DIR / "rejected.md").write_text(rejected_markdown(rejected), encoding="utf-8")
 
 
+def source_report_markdown(store: Store, resolved: list[Candidate]) -> str:
+    final_sources: dict[str, int] = {}
+    for candidate in resolved:
+        for source in candidate.sources:
+            final_sources[source] = final_sources.get(source, 0) + 1
+
+    lines = [
+        "| Source | Platform | Type | Category | Discovered | Normalized | Spotify Resolved | Final Tracks | Notes |",
+        "| ------ | -------- | ---- | -------- | ---------- | ---------- | ---------------- | ------------ | ----- |",
+    ]
+    for row in store.source_report():
+        raw_count = int(row["raw_count"] or 0)
+        normalized_count = int(row["normalized_count"] or 0)
+        final_count = final_sources.get(row["name"], 0)
+        notes = []
+        if raw_count and normalized_count / raw_count < 0.3:
+            notes.append("noisy or low-yield")
+        if final_count:
+            notes.append("produced final tracks")
+        if float(row["best_bridge_score"] or 0) >= 80:
+            notes.append("high bridge value")
+        lines.append(
+            f"| {row['name']} | {row['platform']} | {row['source_type']} | {row['category']} | "
+            f"{raw_count} | {normalized_count} | {int(row['spotify_resolved_count'] or 0)} | {final_count} | {', '.join(notes)} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def write_spotify_playlist(selected: list[Candidate], playlist_name: str, public: bool, yes: bool) -> str:
     if not yes:
         answer = input(f"Write {len(selected)} tracks to Spotify playlist '{playlist_name}'? [y/N] ").strip().lower()
@@ -291,12 +390,13 @@ def write_spotify_playlist(selected: list[Candidate], playlist_name: str, public
             raise SystemExit("cancelled")
 
     client = SpotifyClient()
+    resolver = SpotifyResolver(client)
     me = client.get("/me")
     playlist = client.post(
         f"/users/{me['id']}/playlists",
         {"name": playlist_name, "description": "Distilled by qrator from trusted human sources.", "public": public},
     )
-    uris = [resolve_spotify_uri(client, item) for item in selected]
+    uris = [resolver.resolve(item).spotify_uri for item in selected]
     uris = [uri for uri in uris if uri]
     for index in range(0, len(uris), 100):
         client.post(f"/playlists/{playlist['id']}/tracks", {"uris": uris[index : index + 100]})

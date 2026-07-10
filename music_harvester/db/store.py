@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 from music_harvester.engine.normalize import normalize_key, normalize_text
-from music_harvester.models import Candidate, RawTrack, SourceConfig
+from music_harvester.models import Candidate, MusicCandidate, RawTrack, SourceConfig
 
 
 class Store:
@@ -19,20 +19,45 @@ class Store:
     def init(self) -> None:
         schema = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
         self.conn.executescript(schema)
+        self._ensure_columns()
         self.conn.commit()
+
+    def _ensure_columns(self) -> None:
+        migrations = {
+            "sources": {
+                "category": "text not null default 'structured_api'",
+            },
+            "raw_tracks": {
+                "source_platform": "text",
+                "source_type": "text",
+                "source_name": "text",
+                "source_url": "text",
+                "source_weight": "real",
+                "source_context": "text",
+                "extraction_confidence": "real not null default 1.0",
+                "normalization_confidence": "real not null default 1.0",
+                "spotify_resolution_confidence": "real not null default 0.0",
+            },
+        }
+        for table, columns in migrations.items():
+            existing = {row["name"] for row in self.conn.execute(f"pragma table_info({table})").fetchall()}
+            for name, ddl in columns.items():
+                if name not in existing:
+                    self.conn.execute(f"alter table {table} add column {name} {ddl}")
 
     def upsert_source(self, source: SourceConfig) -> int:
         self.conn.execute(
             """
-            insert into sources (name, platform, source_type, url_or_username, weight)
-            values (?, ?, ?, ?, ?)
+            insert into sources (name, platform, source_type, url_or_username, weight, category)
+            values (?, ?, ?, ?, ?, ?)
             on conflict(name) do update set
               platform=excluded.platform,
               source_type=excluded.source_type,
               url_or_username=excluded.url_or_username,
-              weight=excluded.weight
+              weight=excluded.weight,
+              category=excluded.category
             """,
-            (source.name, source.platform, source.source_type, source.locator, source.weight),
+            (source.name, source.platform, source.source_type, source.locator, source.weight, source.category),
         )
         self.conn.commit()
         return int(self.conn.execute("select id from sources where name = ?", (source.name,)).fetchone()["id"])
@@ -45,21 +70,42 @@ class Store:
         self.conn.commit()
 
     def add_raw_tracks(self, source_id: int, tracks: Iterable[RawTrack]) -> int:
+        source = self.source_by_id(source_id)
+        return self.add_music_candidates(
+            source_id,
+            [track.to_music_candidate(source) if isinstance(track, RawTrack) else track for track in tracks],
+        )
+
+    def add_music_candidates(self, source_id: int, candidates: Iterable[MusicCandidate]) -> int:
         count = 0
-        for track in tracks:
-            raw_id = self._insert_raw_track(source_id, track)
-            normalized_id = self._upsert_normalized(track)
-            self._insert_provenance(normalized_id, source_id, track)
+        for candidate in candidates:
+            raw_id = self._insert_music_candidate(source_id, candidate)
+            normalized_id = self._upsert_normalized(candidate)
+            self._insert_provenance(normalized_id, source_id, candidate)
             count += 1 if raw_id else 0
         self.conn.commit()
         return count
 
-    def _insert_raw_track(self, source_id: int, track: RawTrack) -> int:
+    def source_by_id(self, source_id: int) -> SourceConfig:
+        row = self.conn.execute("select * from sources where id = ?", (source_id,)).fetchone()
+        return SourceConfig(
+            name=row["name"],
+            platform=row["platform"],
+            source_type=row["source_type"],
+            url=row["url_or_username"],
+            weight=float(row["weight"]),
+            category=row["category"],
+        )
+
+    def _insert_music_candidate(self, source_id: int, track: MusicCandidate) -> int:
         cursor = self.conn.execute(
             """
             insert into raw_tracks (
-              source_id, platform_track_id, raw_artist, raw_title, raw_album, raw_url, raw_payload_json
-            ) values (?, ?, ?, ?, ?, ?, ?)
+              source_id, platform_track_id, raw_artist, raw_title, raw_album, raw_url,
+              source_platform, source_type, source_name, source_url, source_weight, source_context,
+              extraction_confidence, normalization_confidence, spotify_resolution_confidence,
+              raw_payload_json
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 source_id,
@@ -68,12 +114,21 @@ class Store:
                 track.title,
                 track.album,
                 track.url,
+                track.source_platform,
+                track.source_type,
+                track.source_name,
+                track.source_url,
+                track.source_weight,
+                track.source_context,
+                track.extraction_confidence,
+                track.normalization_confidence,
+                track.spotify_resolution_confidence,
                 json.dumps(track.payload),
             ),
         )
         return int(cursor.lastrowid)
 
-    def _upsert_normalized(self, track: RawTrack) -> int:
+    def _upsert_normalized(self, track: MusicCandidate) -> int:
         artist = normalize_text(track.artist)
         title = normalize_text(track.title)
         album = normalize_text(track.album) if track.album else None
@@ -96,7 +151,7 @@ class Store:
         row = self.conn.execute("select id from normalized_tracks where unique_key = ?", (key,)).fetchone()
         return int(row["id"])
 
-    def _insert_provenance(self, normalized_id: int, source_id: int, track: RawTrack) -> None:
+    def _insert_provenance(self, normalized_id: int, source_id: int, track: MusicCandidate) -> None:
         self.conn.execute(
             """
             insert into track_provenance (
@@ -119,6 +174,9 @@ class Store:
               group_concat(distinct s.name) as source_names,
               group_concat(distinct s.platform) as platforms,
               group_concat(distinct coalesce(tp.playlist_title, '')) as playlist_titles,
+              avg(rt.extraction_confidence) as extraction_confidence,
+              avg(rt.normalization_confidence) as normalization_confidence,
+              max(rt.spotify_resolution_confidence) as spotify_resolution_confidence,
               coalesce(max(bs.confidence_score), 0) as bridge_source_score,
               group_concat(distinct bs.match_type) as bridge_match_types,
               sum(s.weight) as source_weight,
@@ -127,6 +185,9 @@ class Store:
             from normalized_tracks nt
             join track_provenance tp on tp.normalized_track_id = nt.id
             join sources s on s.id = tp.source_id
+            left join raw_tracks rt on rt.source_id = s.id
+              and lower(rt.raw_artist) = lower(nt.canonical_artist)
+              and lower(rt.raw_title) = lower(nt.canonical_title)
             left join bridge_sources bs on bs.source_id = s.id
             group by nt.id
             """
@@ -147,9 +208,34 @@ class Store:
                 why="",
                 bridge_source_score=float(row["bridge_source_score"] or 0),
                 bridge_match_types=_csv(row["bridge_match_types"]),
+                extraction_confidence=float(row["extraction_confidence"] or 1.0),
+                normalization_confidence=float(row["normalization_confidence"] or 1.0),
+                spotify_resolution_confidence=float(row["spotify_resolution_confidence"] or 0.0),
             )
             for row in rows
         ]
+
+    def source_report(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """
+            select
+              s.name,
+              s.platform,
+              s.source_type,
+              s.category,
+              count(rt.id) as raw_count,
+              count(distinct nt.id) as normalized_count,
+              sum(case when nt.spotify_uri is not null then 1 else 0 end) as spotify_resolved_count,
+              coalesce(max(bs.confidence_score), 0) as best_bridge_score
+            from sources s
+            left join raw_tracks rt on rt.source_id = s.id
+            left join track_provenance tp on tp.source_id = s.id
+            left join normalized_tracks nt on nt.id = tp.normalized_track_id
+            left join bridge_sources bs on bs.source_id = s.id
+            group by s.id
+            order by normalized_count desc, best_bridge_score desc
+            """
+        ).fetchall()
 
     def create_bridge_run(self, seed_type: str, seed_values: list[str]) -> int:
         cursor = self.conn.execute(

@@ -34,8 +34,11 @@ class SoundCloudSource(SourceAdapter):
         source_type = self.source.source_type
         suffix = {
             "user_likes": "likes",
+            "soundcloud_likes": "likes",
             "user_tracks": "tracks",
+            "soundcloud_user_tracks": "tracks",
             "user_reposts": "reposts",
+            "soundcloud_reposts": "reposts",
         }.get(source_type)
         if not suffix:
             raise SourceUnavailable(f"Unsupported SoundCloud user source type: {source_type}")

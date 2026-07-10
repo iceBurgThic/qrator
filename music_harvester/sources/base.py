@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from music_harvester.models import RawTrack, SourceConfig
+from music_harvester.models import MusicCandidate, RawTrack, SourceConfig
 
 
 class SourceAdapter(ABC):
@@ -10,7 +10,7 @@ class SourceAdapter(ABC):
         self.source = source
 
     @abstractmethod
-    def harvest(self) -> list[RawTrack]:
+    def harvest(self) -> list[MusicCandidate | RawTrack]:
         raise NotImplementedError
 
 

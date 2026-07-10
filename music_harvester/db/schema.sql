@@ -5,6 +5,7 @@ create table if not exists sources (
   source_type text not null,
   url_or_username text,
   weight real not null default 1.0,
+  category text not null default 'structured_api',
   created_at text not null default current_timestamp
 );
 
@@ -16,6 +17,15 @@ create table if not exists raw_tracks (
   raw_title text not null,
   raw_album text,
   raw_url text,
+  source_platform text,
+  source_type text,
+  source_name text,
+  source_url text,
+  source_weight real,
+  source_context text,
+  extraction_confidence real not null default 1.0,
+  normalization_confidence real not null default 1.0,
+  spotify_resolution_confidence real not null default 0.0,
   raw_payload_json text,
   harvested_at text not null default current_timestamp
 );

@@ -1,6 +1,8 @@
 # qrator
 
-High quality nerd shit for making Spotify playlists from trusted human taste instead of algorithm soup.
+High quality nerd shit for discovering music across the internet, then writing the final playlist to Spotify.
+
+Spotify is only the destination: resolve playable URIs, create playlists, add tracks. Discovery can come from playlists, SoundCloud, copied text, CSV exports, blogs, web pages, radio tracklists, forums, or whatever else can produce artist/title candidates.
 
 Two modes:
 
@@ -53,12 +55,23 @@ python -m music_harvester.main ingest
 python -m music_harvester.main generate --mode balanced_discovery --length 40
 ```
 
+Paste or import random tracklists without editing config:
+
+```bash
+python -m music_harvester.main import-text --name "forum_dump" --file ~/Downloads/tracklist.txt
+python -m music_harvester.main import-text --name "copied_comment" --text "Freddie Gibbs - Thuggin'"
+```
+
 It saves:
 
 ```text
 output/candidates.json
-output/final_playlist.md
+output/discovered_candidates.json
+output/shortlist.md
+output/final_spotify_playlist.md
+output/unresolved_interesting.md
 output/rejected.md
+output/source_report.md
 ```
 
 Write only after you like the preview:
@@ -88,6 +101,15 @@ python -m music_harvester.main bridge-discover \
   --source-url "https://open.spotify.com/playlist/..."
 ```
 
+Or point it at copied/exported context:
+
+```bash
+python -m music_harvester.main bridge-discover \
+  --artists "Freddie Gibbs" "Igorrr" \
+  --file ~/Downloads/radio-tracklist.txt \
+  --text "Freddie Gibbs - Thuggin'\nIgorrr - Very Noise"
+```
+
 Bridge output lands in:
 
 ```text
@@ -96,7 +118,7 @@ output/bridge_candidates.json
 output/bridge_playlist.md
 ```
 
-Spotify playlist search is treated as candidate discovery only. The app inspects accessible playlists for actual seed co-occurrence before boosting them.
+Spotify playlist search is treated as candidate discovery only. The app inspects accessible playlists, SoundCloud sources, web pages, and pasted text for actual seed co-occurrence before boosting them.
 
 ## Tiny Safety Note
 

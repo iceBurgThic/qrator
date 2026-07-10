@@ -31,25 +31,31 @@ def score_candidates(
         title_relevance = playlist_context_score(candidate.playlist_titles, rules)
 
         components = {
-            "trusted_source_score": trusted_source_score,
-            "multi_source_overlap_score": max(0, source_count - 1) * 6.0,
-            "multi_platform_overlap_score": max(0, platform_count - 1) * 5.0,
+            "provenance_strength": trusted_source_score,
+            "source_trust": trusted_source_score,
+            "source_specificity": min(trusted_source_score, 4.0),
+            "source_context_relevance": title_relevance,
+            "multi_source_overlap": max(0, source_count - 1) * 6.0,
+            "multi_platform_overlap": max(0, platform_count - 1) * 5.0,
+            "bridge_cooccurrence": candidate.bridge_source_score,
+            "extraction_confidence": candidate.extraction_confidence * 3.0,
+            "resolution_confidence": candidate.spotify_resolution_confidence,
             "novelty_score": 0.0,
             "familiarity_score": 0.0,
             "texture_fit_score": title_relevance,
             "energy_fit_score": 0.0,
             "bridge_value_score": 2.5 if platform_count > 1 else 0.0,
-            "bridge_source_score": candidate.bridge_source_score,
             "exact_seed_cooccurrence_score": 20.0 if "exact_all_seeds" in candidate.bridge_match_types else 0.0,
             "near_bridge_score": 8.0 if "near_bridge" in candidate.bridge_match_types else 0.0,
             "cross_platform_bridge_score": 5.0 if candidate.bridge_source_score and platform_count > 1 else 0.0,
             "source_bridge_density": min(candidate.bridge_source_score / 10.0, 12.0),
             "contrast_value_score": 1.0 if source_count == 1 and platform_count == 1 else 0.0,
-            "sequencing_value_score": 0.0,
-            "user_feedback_score": 0.0,
-            "source_quality_score": min(trusted_source_score / 4.0, 4.0),
-            "recently_played_penalty": 0.0,
-            "low_provenance_penalty": -2.5 if source_count == 1 and trusted_source_score < 1.2 else 0.0,
+            "sequencing_value": 0.0,
+            "feedback_history": 0.0,
+            "recently_played": 0.0,
+            "weak_provenance": -2.5 if source_count == 1 and trusted_source_score < 1.2 else 0.0,
+            "noisy_source": -1.5 if source_count == 1 and any("likes" in title.lower() for title in candidate.playlist_titles) else 0.0,
+            "low_confidence_extraction": -4.0 if candidate.extraction_confidence < 0.7 else 0.0,
             "almost_wrong_similarity_penalty": 0.0,
         }
 
@@ -59,16 +65,13 @@ def score_candidates(
         if candidate.id not in recently_played:
             components["novelty_score"] += 2.0
         else:
-            components["recently_played_penalty"] -= 7.0
+            components["recently_played"] -= 7.0
 
         for rating in feedback.get(candidate.id, []):
             value = FEEDBACK_BONUS.get(rating, 0.0)
-            components["user_feedback_score"] += value
+            components["feedback_history"] += value
             if rating == "almost_wrong":
                 components["almost_wrong_similarity_penalty"] -= 1.5
-
-        if source_count == 1 and any("likes" in title.lower() for title in candidate.playlist_titles):
-            components["low_provenance_penalty"] -= 1.5
 
         score = sum(components.values())
         candidate.score = round(score, 2)

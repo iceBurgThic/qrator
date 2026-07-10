@@ -75,13 +75,13 @@ class SpotifySource(SourceAdapter):
         self.client = client or SpotifyClient()
 
     def harvest(self) -> list[RawTrack]:
-        if self.source.source_type == "playlist":
+        if self.source.source_type in {"playlist", "spotify_playlist"}:
             playlist_id = extract_playlist_id(self.source.locator)
             if not playlist_id:
                 raise SourceUnavailable(f"Could not parse Spotify playlist URL for {self.source.name}.")
             return self._playlist_tracks(playlist_id)
 
-        if self.source.source_type in {"profile", "user", "user_playlists"}:
+        if self.source.source_type in {"profile", "spotify_profile", "user", "user_playlists"}:
             user_id = extract_user_id(self.source.locator) or self.source.username
             if not user_id:
                 raise SourceUnavailable(f"Could not parse Spotify user/profile URL for {self.source.name}.")
