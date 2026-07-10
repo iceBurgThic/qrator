@@ -223,9 +223,9 @@ class Store:
               s.platform,
               s.source_type,
               s.category,
-              count(rt.id) as raw_count,
+              count(distinct rt.id) as raw_count,
               count(distinct nt.id) as normalized_count,
-              sum(case when nt.spotify_uri is not null then 1 else 0 end) as spotify_resolved_count,
+              count(distinct case when nt.spotify_uri is not null then nt.id end) as spotify_resolved_count,
               coalesce(max(bs.confidence_score), 0) as best_bridge_score
             from sources s
             left join raw_tracks rt on rt.source_id = s.id

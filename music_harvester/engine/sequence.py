@@ -68,7 +68,7 @@ def choose_next(
             continue
         if any(source_counts[source] >= max_per_source for source in candidate.sources):
             continue
-        if would_make_source_run(selected, candidate):
+        if would_make_source_run(selected, candidate) and has_source_alternative(pool, selected, candidate):
             continue
         viable.append((candidate.score + pool_need_bonus(candidate, pool_counts, pool_mix, target), index))
     if not viable:
@@ -83,6 +83,18 @@ def would_make_source_run(selected: list[Candidate], candidate: Candidate) -> bo
     if not candidate_sources:
         return False
     return all(candidate_sources.intersection(item.sources) for item in selected[-2:])
+
+
+def has_source_alternative(pool: list[Candidate], selected: list[Candidate], candidate: Candidate) -> bool:
+    if len(selected) < 2:
+        return False
+    current_sources = set(candidate.sources)
+    for alternative in pool[:80]:
+        if alternative is candidate:
+            continue
+        if not current_sources.intersection(alternative.sources):
+            return True
+    return False
 
 
 def pool_need_bonus(candidate: Candidate, pool_counts: Counter[str], pool_mix: dict[str, float], target: int) -> float:
