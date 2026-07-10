@@ -57,7 +57,7 @@ const server = http.createServer(async (req, res) => {
       });
     }
     if (req.method === 'GET' && url.pathname === '/api/me') {
-      return spotifyProxy(res, 'https://api.spotify.com/v1/me');
+      return await spotifyProxy(res, 'https://api.spotify.com/v1/me');
     }
     if (req.method === 'GET' && url.pathname === '/api/search') {
       const query = url.searchParams.get('q')?.trim();
@@ -67,22 +67,23 @@ const server = http.createServer(async (req, res) => {
       searchUrl.searchParams.set('type', 'track');
       searchUrl.searchParams.set('limit', '8');
       searchUrl.searchParams.set('q', query);
-      return spotifyProxy(res, searchUrl);
+      return await spotifyProxy(res, searchUrl);
     }
     if (req.method === 'POST' && url.pathname === '/api/playlists') {
-      return createPlaylist(req, res);
+      return await createPlaylist(req, res);
     }
     if (req.method === 'POST' && url.pathname === '/api/discover') {
-      return discover(req, res);
+      return await discover(req, res);
     }
     if (req.method === 'POST' && url.pathname === '/api/discover/playlist') {
-      return createDiscoveryPlaylist(req, res);
+      return await createDiscoveryPlaylist(req, res);
     }
 
     return json(res, 404, { error: 'Not found.' });
   } catch (error) {
     console.error(error);
-    return json(res, 500, { error: error.message || 'Unexpected error.' });
+    const status = Number.isInteger(error.status) ? error.status : 500;
+    return json(res, status, { error: error.message || 'Unexpected error.' });
   }
 });
 
@@ -158,14 +159,13 @@ async function createPlaylist(req, res) {
   if (!name) return json(res, 400, { error: 'Playlist name is required.' });
   if (uris.length === 0) return json(res, 400, { error: 'Add at least one track.' });
 
-  const user = await spotifyFetch('https://api.spotify.com/v1/me');
-  const playlist = await spotifyFetch(`https://api.spotify.com/v1/users/${encodeURIComponent(user.id)}/playlists`, {
+  const playlist = await spotifyFetch('https://api.spotify.com/v1/me/playlists', {
     method: 'POST',
     body: JSON.stringify({ name, description, public: isPublic }),
   });
 
   for (let i = 0; i < uris.length; i += 100) {
-    await spotifyFetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
+    await spotifyFetch(`https://api.spotify.com/v1/playlists/${playlist.id}/items`, {
       method: 'POST',
       body: JSON.stringify({ uris: uris.slice(i, i + 100) }),
     });
@@ -250,8 +250,7 @@ async function createDiscoveryPlaylist(req, res) {
     return json(res, 400, { error: 'No Spotify-resolved tracks found in the current shortlist.' });
   }
 
-  const user = await spotifyFetch('https://api.spotify.com/v1/me');
-  const playlist = await spotifyFetch(`https://api.spotify.com/v1/users/${encodeURIComponent(user.id)}/playlists`, {
+  const playlist = await spotifyFetch('https://api.spotify.com/v1/me/playlists', {
     method: 'POST',
     body: JSON.stringify({
       name,
@@ -261,7 +260,7 @@ async function createDiscoveryPlaylist(req, res) {
   });
 
   for (let i = 0; i < uris.length; i += 100) {
-    await spotifyFetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
+    await spotifyFetch(`https://api.spotify.com/v1/playlists/${playlist.id}/items`, {
       method: 'POST',
       body: JSON.stringify({ uris: uris.slice(i, i + 100) }),
     });
@@ -363,10 +362,20 @@ async function spotifyFetch(url, options = {}) {
 
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
-  if (!response.ok) {
-    throw new Error(data.error?.message || data.error_description || `Spotify API failed with ${response.status}`);
-  }
+  if (!response.ok) throw spotifyError(response, data, url, options);
   return data;
+}
+
+function spotifyError(response, data, url, options = {}) {
+  const message = data.error?.message || data.error_description || `Spotify API failed with ${response.status}`;
+  const hint = response.status === 403
+    ? 'Spotify returned 403 Forbidden. Reconnect Spotify from /login so the token has playlist-write scopes; if it still fails, make sure your Spotify app is not blocking this account in development mode.'
+    : '';
+  const method = options.method || 'GET';
+  const detail = data.error ? `Spotify error: ${JSON.stringify(data.error)}` : '';
+  const error = new Error([message, hint, `${method} ${url}`, detail].filter(Boolean).join(' '));
+  error.status = response.status;
+  return error;
 }
 
 async function getValidToken() {
