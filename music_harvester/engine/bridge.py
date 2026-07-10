@@ -36,6 +36,7 @@ class BridgeResult:
     sources_checked: int
     sources_ingested: int
     high_confidence_sources: int
+    discovery_notes: list[str]
 
 
 def bridge_discover(
@@ -51,7 +52,7 @@ def bridge_discover(
     seeds = normalize_seeds(artists, tracks)
     seed_type = "tracks" if tracks and not artists else "artists" if artists and not tracks else "mixed"
     bridge_run_id = store.create_bridge_run(seed_type, artists + tracks)
-    sources = candidate_sources(seeds, source_urls, files or [], texts or [], search_limit)
+    sources, discovery_notes = candidate_sources(seeds, source_urls, files or [], texts or [], search_limit)
 
     checked = 0
     ingested = 0
@@ -63,7 +64,8 @@ def bridge_discover(
             harvested = adapter_for(source).harvest()
         except (SourceUnavailable, ApiError, OSError, RuntimeError) as exc:
             store.add_error(source.name, str(exc), source_id)
-            store.add_bridge_source(bridge_run_id, source_id, "inaccessible", 0, [], str(exc))
+            match_type, confidence, matched, notes = evaluate_unharvested_source(source, seeds, str(exc))
+            store.add_bridge_source(bridge_run_id, source_id, match_type, confidence, matched, notes)
             continue
 
         count = store.add_raw_tracks(source_id, harvested)
@@ -74,7 +76,7 @@ def bridge_discover(
         store.add_bridge_source(bridge_run_id, source_id, match_type, confidence, matched, notes)
 
     write_bridge_sources_md(store, bridge_run_id)
-    return BridgeResult(bridge_run_id, checked, ingested, high_confidence)
+    return BridgeResult(bridge_run_id, checked, ingested, high_confidence, discovery_notes)
 
 
 def normalize_seeds(artists: list[str], tracks: list[str]) -> list[dict]:
@@ -91,8 +93,9 @@ def normalize_seeds(artists: list[str], tracks: list[str]) -> list[dict]:
     return seeds
 
 
-def candidate_sources(seeds: list[dict], source_urls: list[str], files: list[str], texts: list[str], search_limit: int) -> list[SourceConfig]:
+def candidate_sources(seeds: list[dict], source_urls: list[str], files: list[str], texts: list[str], search_limit: int) -> tuple[list[SourceConfig], list[str]]:
     sources: list[SourceConfig] = []
+    notes: list[str] = []
     seen: set[str] = set()
     for index, url in enumerate(source_urls, 1):
         source = source_from_url(f"bridge_user_{index}", url, 3.0)
@@ -113,17 +116,17 @@ def candidate_sources(seeds: list[dict], source_urls: list[str], files: list[str
     try:
         client = SpotifyClient()
         for seed in sorted(seeds, key=lambda item: len(item["value"]), reverse=True):
-            for playlist in client.search_playlists(seed["value"], limit=search_limit):
+            for playlist in client.search_playlists(seed["value"], limit=max(1, min(search_limit, 10))):
                 external = (playlist.get("external_urls") or {}).get("spotify")
                 if not external or external in seen:
                     continue
                 seen.add(external)
                 name = slug(f"bridge_spotify_{playlist.get('name') or 'playlist'}_{playlist.get('id')}")
                 sources.append(SourceConfig(name=name, platform="spotify", source_type="spotify_playlist", url=external, weight=2.0, category="structured_api"))
-    except Exception:
-        pass
+    except Exception as exc:
+        notes.append(f"Spotify playlist candidate search unavailable: {exc}")
 
-    return sources
+    return sources, notes
 
 
 def source_from_url(name: str, url: str, weight: float) -> SourceConfig | None:
@@ -155,11 +158,32 @@ def evaluate_bridge_source(source: SourceConfig, tracks: list[RawTrack], seeds: 
     return "near_bridge", max(5.0, direct_bonus), matched, "weak bridge candidate retained for review"
 
 
+def evaluate_unharvested_source(source: SourceConfig, seeds: list[dict], error: str) -> tuple[str, float, list[str], str]:
+    text = f"{source.name} {source.locator}".lower()
+    matched = sorted({seed["value"] for seed in seeds if seed_text_match(seed, text)})
+    title_score = bridge_title_score([source.name, source.locator])
+    if matched:
+        confidence = 15.0 + (10.0 * len(matched)) + title_score
+        return "title_match_only", confidence, matched, f"metadata matched but source could not be fully parsed: {error}"
+    if title_score:
+        return "title_match_only", title_score, [], f"context title matched but source could not be fully parsed: {error}"
+    return "inaccessible", 0.0, [], error
+
+
 def seed_matches_tracks(seed: dict, tracks: list[RawTrack]) -> bool:
     if seed["type"] == "artist":
         needle = seed["artist"].lower()
         return any(needle in track.artist.lower() for track in tracks)
     return any(normalize_key(track.artist, track.title) == seed["key"] for track in tracks)
+
+
+def seed_text_match(seed: dict, text: str) -> bool:
+    normalized_text = normalize_key("", text)
+    if seed["type"] == "artist":
+        return normalize_key("", seed["artist"]) in normalized_text
+    artist = normalize_key("", seed.get("artist", ""))
+    title = normalize_key("", seed.get("title", ""))
+    return bool((artist and artist in normalized_text) or (title and title in normalized_text))
 
 
 def bridge_density(tracks: list[RawTrack], seeds: list[dict]) -> float:

@@ -183,6 +183,8 @@ def cmd_generate(args: argparse.Namespace, store: Store) -> int:
             f"bridge discovery run {result.bridge_run_id}: checked {result.sources_checked}, "
             f"ingested {result.sources_ingested}, high-confidence {result.high_confidence_sources}"
         )
+        for note in result.discovery_notes:
+            print(f"note: {note}")
         mode = "bridge_discovery"
     selected, rejected, candidates = generate_playlist(store, Path(args.config_dir), mode, args.length)
     write_outputs(store, selected, rejected, candidates, bridge=True if args.from_bridge else False)
@@ -214,6 +216,8 @@ def cmd_bridge_discover(args: argparse.Namespace, store: Store) -> int:
         f"bridge discovery run {result.bridge_run_id}: checked {result.sources_checked}, "
         f"ingested {result.sources_ingested}, high-confidence {result.high_confidence_sources}"
     )
+    for note in result.discovery_notes:
+        print(f"note: {note}")
     print(f"saved {OUTPUT_DIR / 'bridge_sources.md'}")
     print(f"saved {OUTPUT_DIR / 'bridge_candidates.json'}")
     return 0
