@@ -19,7 +19,8 @@ from music_harvester.sources.base import SourceAdapter, SourceUnavailable
 
 PLAYLIST_RE = re.compile(r"playlist/([A-Za-z0-9]+)")
 PLAYLIST_TRACK_META_RE = re.compile(r'<meta\s+name="music:song"\s+content="https://open\.spotify\.com/track/([A-Za-z0-9]+)"')
-SPOTIFY_PLAYLIST_SAMPLE_SIZE = 40
+SPOTIFY_FAST_SAMPLE_SIZE = 40
+SPOTIFY_THOROUGH_SAMPLE_SIZE = 80
 TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 USER_RE = re.compile(r"user/([^/?]+)")
 
@@ -129,7 +130,8 @@ class SpotifySource(SourceAdapter):
                 return self._playlist_tracks_from_public_page(playlist_id, playlist_title)
             raise
         total = int(first_page.get("total") or 0)
-        if total > SPOTIFY_PLAYLIST_SAMPLE_SIZE:
+        budget = spotify_source_budget()
+        if total > budget["sample_size"]:
             return self._sampled_playlist_tracks(playlist_id, playlist_title, total)
 
         while url:
@@ -151,13 +153,14 @@ class SpotifySource(SourceAdapter):
 
     def _sampled_playlist_tracks(self, playlist_id: str, playlist_title: str, total: int) -> list[RawTrack]:
         tracks: list[RawTrack] = []
-        for position in sampled_positions(total, SPOTIFY_PLAYLIST_SAMPLE_SIZE, playlist_id):
+        budget = spotify_source_budget()
+        for position in sampled_positions(total, budget["sample_size"], playlist_id):
             try:
                 page = self.client.get(
                     f"/playlists/{playlist_id}/items",
                     params={"limit": 1, "offset": position},
-                    polite_delay=0.75,
-                    retries=4,
+                    polite_delay=budget["polite_delay"],
+                    retries=budget["retries"],
                 )
             except ApiError as exc:
                 if exc.status == 429 and tracks:
@@ -175,12 +178,17 @@ class SpotifySource(SourceAdapter):
         html = fetch_spotify_playlist_page(playlist_id)
         playlist_title = playlist_title_from_html(html) or playlist_title
         track_ids = list(dict.fromkeys(PLAYLIST_TRACK_META_RE.findall(html)))
-        track_ids = sampled_track_ids(track_ids, SPOTIFY_PLAYLIST_SAMPLE_SIZE, playlist_id)
+        budget = spotify_source_budget()
+        track_ids = sampled_track_ids(track_ids, budget["sample_size"], playlist_id)
         tracks: list[RawTrack] = []
         position = 0
         for track_id in track_ids:
             try:
-                track = self.client.get(f"/tracks/{track_id}", polite_delay=0.75, retries=4)
+                track = self.client.get(
+                    f"/tracks/{track_id}",
+                    polite_delay=budget["polite_delay"],
+                    retries=budget["retries"],
+                )
             except ApiError as exc:
                 if exc.status == 429 and tracks:
                     return tracks
@@ -272,6 +280,12 @@ def sampled_positions(total: int, sample_size: int, key: str) -> list[int]:
         end = round((index + 1) * total / sample_size)
         sampled.append(rng.randrange(start, max(start + 1, end)))
     return sampled
+
+
+def spotify_source_budget() -> dict[str, float | int]:
+    if os.environ.get("QRATOR_SOURCE_PROCESSING") == "thorough":
+        return {"sample_size": SPOTIFY_THOROUGH_SAMPLE_SIZE, "polite_delay": 1.0, "retries": 8}
+    return {"sample_size": SPOTIFY_FAST_SAMPLE_SIZE, "polite_delay": 0.75, "retries": 4}
 
 
 def extract_user_id(value: str) -> str | None:

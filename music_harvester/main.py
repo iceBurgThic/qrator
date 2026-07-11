@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -77,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     create_seeds = sub.add_parser("create-seeds")
     add_discovery_input_args(create_seeds)
     create_seeds.add_argument("--length", type=int, default=30)
+    create_seeds.add_argument("--thorough", action="store_true")
     create_seeds.set_defaults(func=cmd_create_seeds)
 
     discover_seeds = sub.add_parser("discover-from-seeds")
@@ -247,6 +249,8 @@ def cmd_create_seeds(args: argparse.Namespace, store: Store) -> int:
     if not args.artists and not args.tracks and not args.source_url and not args.file and not args.text:
         print("Provide seeds, source URLs, files, or text.")
         return 1
+    if args.thorough:
+        os.environ["QRATOR_SOURCE_PROCESSING"] = "thorough"
     result = bridge_discover(
         store,
         artists=args.artists,

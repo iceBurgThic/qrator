@@ -180,6 +180,7 @@ async function discover(req, res) {
   const input = String(body.query || '').trim();
   const length = Math.max(5, Math.min(Number(body.length || 30), 60));
   const mode = body.mode === 'discover' ? 'discover' : 'distill';
+  const thorough = Boolean(body.thorough);
   if (!input) return json(res, 400, { error: 'Missing discovery query.' });
 
   const parsed = parseDiscoveryInput(input);
@@ -206,6 +207,7 @@ async function discover(req, res) {
   } else {
     for (const sourceUrl of parsed.urls) discoverArgs.push('--source-url', sourceUrl);
     if (parsed.text) discoverArgs.push('--text', parsed.text);
+    if (thorough) discoverArgs.push('--thorough');
   }
   discoverArgs.push('--length', String(length));
 

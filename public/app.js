@@ -32,9 +32,10 @@ searchForm.addEventListener('submit', async (event) => {
 discoverForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const query = document.querySelector('#discover-query').value.trim();
+  const thorough = document.querySelector('#source-thorough').checked;
   if (!query) return;
 
-  await runDiscovery(query, 30, 'distill');
+  await runDiscovery(query, 30, 'distill', thorough);
 });
 
 playlistForm.addEventListener('submit', async (event) => {
@@ -135,7 +136,7 @@ function renderDiscovery(data) {
     const query = latestDiscoverySeeds.join('\n');
     const length = Number(document.querySelector('#seed-playlist-length')?.value || 30);
     document.querySelector('#discover-query').value = query;
-    runDiscovery(query, length, 'discover');
+    runDiscovery(query, length, 'discover', false);
   });
 
   document.querySelector('#discovery-playlist-form')?.addEventListener('submit', async (event) => {
@@ -157,13 +158,15 @@ function renderDiscovery(data) {
   });
 }
 
-async function runDiscovery(query, length, mode) {
+async function runDiscovery(query, length, mode, thorough = false) {
   discoverOutput.className = 'markdown-output empty';
-  discoverOutput.textContent = mode === 'discover' ? 'Discovering from shortlist...' : 'Creating seeds...';
+  discoverOutput.textContent = mode === 'discover'
+    ? 'Discovering from shortlist...'
+    : thorough ? 'Creating seeds thoroughly...' : 'Creating seeds...';
   try {
     const data = await api('/api/discover', {
       method: 'POST',
-      body: JSON.stringify({ query, length, mode }),
+      body: JSON.stringify({ query, length, mode, thorough }),
     });
     latestDiscoverySeeds = data.seeds || [];
     latestDiscoveryHasPlaylist = Boolean(data.playlist);
