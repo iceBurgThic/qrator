@@ -211,6 +211,14 @@ form,
   justify-self: start;
 }
 
+.seed-playlist-action {
+  display: grid;
+  grid-template-columns: auto minmax(110px, 160px);
+  gap: 12px;
+  align-items: end;
+  justify-content: start;
+}
+
 .inline-playlist {
   display: grid;
   grid-template-columns: minmax(180px, 280px) auto auto 1fr;
@@ -252,6 +260,10 @@ code {
   }
 
   .inline-playlist {
+    grid-template-columns: 1fr;
+  }
+
+  .seed-playlist-action {
     grid-template-columns: 1fr;
   }
 }

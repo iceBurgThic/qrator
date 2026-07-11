@@ -32,10 +32,9 @@ searchForm.addEventListener('submit', async (event) => {
 discoverForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const query = document.querySelector('#discover-query').value.trim();
-  const length = Number(document.querySelector('#discover-length').value || 30);
   if (!query) return;
 
-  await runDiscovery(query, length, 'distill');
+  await runDiscovery(query, 30, 'distill');
 });
 
 playlistForm.addEventListener('submit', async (event) => {
@@ -112,7 +111,13 @@ function renderDiscovery(data) {
 
   discoverOutput.className = 'markdown-output';
   const seedButton = latestDiscoverySeeds.length
-    ? '<button id="use-shortlist-seeds" type="button">Make playlist from seeds</button>'
+    ? `<div class="seed-playlist-action">
+        <button id="use-shortlist-seeds" type="button">Make playlist from seeds</button>
+        <label>
+          Playlist length
+          <input id="seed-playlist-length" type="number" min="5" max="60" value="30">
+        </label>
+      </div>`
     : '';
   const playlistControls = latestDiscoveryHasPlaylist
     ? `<form id="discovery-playlist-form" class="inline-playlist">
@@ -128,8 +133,9 @@ function renderDiscovery(data) {
 
   document.querySelector('#use-shortlist-seeds')?.addEventListener('click', () => {
     const query = latestDiscoverySeeds.join('\n');
+    const length = Number(document.querySelector('#seed-playlist-length')?.value || 30);
     document.querySelector('#discover-query').value = query;
-    runDiscovery(query, Number(document.querySelector('#discover-length').value || 30), 'discover');
+    runDiscovery(query, length, 'discover');
   });
 
   document.querySelector('#discovery-playlist-form')?.addEventListener('submit', async (event) => {
