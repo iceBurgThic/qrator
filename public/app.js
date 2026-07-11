@@ -104,7 +104,7 @@ function renderSelected() {
 
 function renderDiscovery(data) {
   const sections = [];
-  const playlistTitle = data.mode === 'discover' ? 'Discovery Playlist' : 'Source Shortlist';
+  const playlistTitle = data.mode === 'discover' ? 'Discovery Playlist' : 'Seed Shortlist';
   if (data.playlist) sections.push([playlistTitle, data.playlist]);
   if (data.sources) sections.push(['Discovery Sources', data.sources]);
   if (data.unresolved) sections.push(['Unresolved', data.unresolved]);
@@ -153,7 +153,7 @@ function renderDiscovery(data) {
 
 async function runDiscovery(query, length, mode) {
   discoverOutput.className = 'markdown-output empty';
-  discoverOutput.textContent = mode === 'discover' ? 'Discovering from shortlist...' : 'Discovering...';
+  discoverOutput.textContent = mode === 'discover' ? 'Discovering from shortlist...' : 'Creating seeds...';
   try {
     const data = await api('/api/discover', {
       method: 'POST',
