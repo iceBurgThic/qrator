@@ -19,8 +19,10 @@ from music_harvester.sources.base import SourceAdapter, SourceUnavailable
 
 PLAYLIST_RE = re.compile(r"playlist/([A-Za-z0-9]+)")
 PLAYLIST_TRACK_META_RE = re.compile(r'<meta\s+name="music:song"\s+content="https://open\.spotify\.com/track/([A-Za-z0-9]+)"')
-SPOTIFY_FAST_SAMPLE_SIZE = 40
+SPOTIFY_FAST_SAMPLE_SIZE = 20
 SPOTIFY_THOROUGH_SAMPLE_SIZE = 80
+SPOTIFY_FAST_FULL_API_READ_LIMIT = 250
+SPOTIFY_THOROUGH_FULL_API_READ_LIMIT = 500
 TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 USER_RE = re.compile(r"user/([^/?]+)")
 
@@ -131,7 +133,7 @@ class SpotifySource(SourceAdapter):
             raise
         total = int(first_page.get("total") or 0)
         budget = spotify_source_budget()
-        if total > budget["sample_size"]:
+        if total > budget["full_api_read_limit"]:
             return self._sampled_playlist_tracks(playlist_id, playlist_title, total)
 
         while url:
@@ -286,8 +288,18 @@ def sampled_positions(total: int, sample_size: int, key: str) -> list[int]:
 
 def spotify_source_budget() -> dict[str, float | int]:
     if os.environ.get("QRATOR_SOURCE_PROCESSING") == "thorough":
-        return {"sample_size": SPOTIFY_THOROUGH_SAMPLE_SIZE, "polite_delay": 1.0, "retries": 8}
-    return {"sample_size": SPOTIFY_FAST_SAMPLE_SIZE, "polite_delay": 0.25, "retries": 0}
+        return {
+            "sample_size": SPOTIFY_THOROUGH_SAMPLE_SIZE,
+            "full_api_read_limit": SPOTIFY_THOROUGH_FULL_API_READ_LIMIT,
+            "polite_delay": 1.0,
+            "retries": 8,
+        }
+    return {
+        "sample_size": SPOTIFY_FAST_SAMPLE_SIZE,
+        "full_api_read_limit": SPOTIFY_FAST_FULL_API_READ_LIMIT,
+        "polite_delay": 0.25,
+        "retries": 0,
+    }
 
 
 def extract_user_id(value: str) -> str | None:
