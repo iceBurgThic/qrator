@@ -112,7 +112,7 @@ function renderDiscovery(data) {
 
   discoverOutput.className = 'markdown-output';
   const seedButton = latestDiscoverySeeds.length
-    ? '<button id="use-shortlist-seeds" type="button">Discover from shortlist</button>'
+    ? '<button id="use-shortlist-seeds" type="button">Make playlist from seeds</button>'
     : '';
   const playlistControls = latestDiscoveryHasPlaylist
     ? `<form id="discovery-playlist-form" class="inline-playlist">
