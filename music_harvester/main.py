@@ -74,6 +74,18 @@ def build_parser() -> argparse.ArgumentParser:
     bridge.add_argument("--search-limit", type=int, default=10)
     bridge.set_defaults(func=cmd_bridge_discover)
 
+    create_seeds = sub.add_parser("create-seeds")
+    add_discovery_input_args(create_seeds)
+    create_seeds.add_argument("--length", type=int, default=30)
+    create_seeds.set_defaults(func=cmd_create_seeds)
+
+    discover_seeds = sub.add_parser("discover-from-seeds")
+    discover_seeds.add_argument("--artists", nargs="+", default=[])
+    discover_seeds.add_argument("--tracks", nargs="+", default=[])
+    discover_seeds.add_argument("--length", type=int, default=40)
+    discover_seeds.add_argument("--search-limit", type=int, default=10)
+    discover_seeds.set_defaults(func=cmd_discover_from_seeds)
+
     explain = sub.add_parser("explain")
     explain.add_argument("track")
     explain.set_defaults(func=cmd_explain)
@@ -99,6 +111,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.set_defaults(func=cmd_run)
 
     return parser
+
+
+def add_discovery_input_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--artists", nargs="+", default=[])
+    parser.add_argument("--tracks", nargs="+", default=[])
+    parser.add_argument("--source-url", action="append", default=[])
+    parser.add_argument("--file", action="append", default=[])
+    parser.add_argument("--text", action="append", default=[])
 
 
 def cmd_ingest(args: argparse.Namespace, store: Store) -> int:
@@ -220,6 +240,60 @@ def cmd_bridge_discover(args: argparse.Namespace, store: Store) -> int:
         print(f"note: {note}")
     print(f"saved {OUTPUT_DIR / 'bridge_sources.md'}")
     print(f"saved {OUTPUT_DIR / 'bridge_candidates.json'}")
+    return 0
+
+
+def cmd_create_seeds(args: argparse.Namespace, store: Store) -> int:
+    if not args.artists and not args.tracks and not args.source_url and not args.file and not args.text:
+        print("Provide seeds, source URLs, files, or text.")
+        return 1
+    result = bridge_discover(
+        store,
+        artists=args.artists,
+        tracks=args.tracks,
+        source_urls=args.source_url,
+        files=args.file,
+        texts=args.text,
+        search_limit=0,
+    )
+    selected, rejected, candidates = generate_playlist(store, Path(args.config_dir), "balanced_discovery", args.length)
+    write_outputs(store, selected, rejected, candidates, bridge=False)
+    print(markdown_table(selected))
+    print(
+        f"seed creation run {result.bridge_run_id}: checked {result.sources_checked}, "
+        f"ingested {result.sources_ingested}"
+    )
+    for note in result.discovery_notes:
+        print(f"note: {note}")
+    print(f"saved {OUTPUT_DIR / 'final_playlist.md'}")
+    print(f"saved {OUTPUT_DIR / 'final_playlist.json'}")
+    return 0
+
+
+def cmd_discover_from_seeds(args: argparse.Namespace, store: Store) -> int:
+    if not args.artists and not args.tracks:
+        print("Provide --artists or --tracks seeds.")
+        return 1
+    result = bridge_discover(
+        store,
+        artists=args.artists,
+        tracks=args.tracks,
+        source_urls=[],
+        files=[],
+        texts=[],
+        search_limit=args.search_limit,
+    )
+    selected, rejected, candidates = generate_playlist(store, Path(args.config_dir), "bridge_discovery", args.length)
+    write_outputs(store, selected, rejected, candidates, bridge=True)
+    print(markdown_table(selected))
+    print(
+        f"seed discovery run {result.bridge_run_id}: checked {result.sources_checked}, "
+        f"ingested {result.sources_ingested}, high-confidence {result.high_confidence_sources}"
+    )
+    for note in result.discovery_notes:
+        print(f"note: {note}")
+    print(f"saved {OUTPUT_DIR / 'final_playlist.md'}")
+    print(f"saved {OUTPUT_DIR / 'final_playlist.json'}")
     return 0
 
 

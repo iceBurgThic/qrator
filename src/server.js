@@ -188,35 +188,28 @@ async function discover(req, res) {
   }
 
   const dbPath = path.join('/tmp', `qrator-gui-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.sqlite`);
-  const seedArgs = parsed.seeds.length >= 2 ? parsed.seeds : ['source blend', 'manual sources'];
-  const bridgeArgs = [
+  const discoverArgs = [
     '-m',
     'music_harvester.main',
     '--db',
     dbPath,
-    'bridge-discover',
-    parsed.seedType,
-    ...seedArgs,
-    '--search-limit',
-    mode === 'discover' && parsed.seeds.length >= 2 ? '10' : '0',
+    mode === 'discover' ? 'discover-from-seeds' : 'create-seeds',
   ];
-  for (const sourceUrl of parsed.urls) bridgeArgs.push('--source-url', sourceUrl);
-  if (parsed.text) bridgeArgs.push('--text', parsed.text);
+  if (parsed.seeds.length) {
+    discoverArgs.push(parsed.seedType, ...parsed.seeds);
+  }
+  if (mode === 'discover') {
+    if (parsed.seeds.length < 2) {
+      return json(res, 400, { error: 'Make playlist from seeds needs at least two seed tracks or artists.' });
+    }
+    discoverArgs.push('--search-limit', '10');
+  } else {
+    for (const sourceUrl of parsed.urls) discoverArgs.push('--source-url', sourceUrl);
+    if (parsed.text) discoverArgs.push('--text', parsed.text);
+  }
+  discoverArgs.push('--length', String(length));
 
-  const generateArgs = [
-    '-m',
-    'music_harvester.main',
-    '--db',
-    dbPath,
-    'generate',
-    '--mode',
-    mode === 'discover' && parsed.seeds.length >= 2 ? 'bridge_discovery' : 'balanced_discovery',
-    '--length',
-    String(length),
-  ];
-
-  const bridge = await runPython(bridgeArgs);
-  const generated = await runPython(generateArgs);
+  const discovered = await runPython(discoverArgs);
 
   const [playlist, sources, unresolved] = await Promise.all([
     readOptional(path.join(root, 'output', 'final_playlist.md')),
@@ -226,8 +219,8 @@ async function discover(req, res) {
   const seeds = await readPlaylistSeeds(path.join(root, 'output', 'final_playlist.json'));
 
   const response = {
-    bridge_stdout: bridge.stdout,
-    generate_stdout: generated.stdout,
+    bridge_stdout: '',
+    generate_stdout: discovered.stdout,
     playlist,
     sources,
     unresolved,
