@@ -138,6 +138,8 @@ class SpotifySource(SourceAdapter):
             try:
                 page = self.client.get(url, params=params)
             except ApiError as exc:
+                if exc.status == 429 and tracks:
+                    return tracks
                 if exc.status in {403, 404, 429}:
                     return self._playlist_tracks_from_public_page(playlist_id, playlist_title)
                 raise
@@ -285,7 +287,7 @@ def sampled_positions(total: int, sample_size: int, key: str) -> list[int]:
 def spotify_source_budget() -> dict[str, float | int]:
     if os.environ.get("QRATOR_SOURCE_PROCESSING") == "thorough":
         return {"sample_size": SPOTIFY_THOROUGH_SAMPLE_SIZE, "polite_delay": 1.0, "retries": 8}
-    return {"sample_size": SPOTIFY_FAST_SAMPLE_SIZE, "polite_delay": 0.75, "retries": 4}
+    return {"sample_size": SPOTIFY_FAST_SAMPLE_SIZE, "polite_delay": 0.25, "retries": 0}
 
 
 def extract_user_id(value: str) -> str | None:
